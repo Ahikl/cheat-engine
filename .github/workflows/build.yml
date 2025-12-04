@@ -5,54 +5,41 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-2019 
+    runs-on: windows-latest
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
-    - name: Install Lazarus and Cross Compilers
-      shell: cmd
-      run: |
-        echo Downloading lazarus-1.6.4-fpc-3.0.2-win32
-        curl -fsSL -o lazarus-1.6.4-fpc-3.0.2-win32.exe "https://www.dropbox.com/s/4l1h2ku0srtscfo/lazarus-1.6.4-fpc-3.0.2-win32.exe?dl=1"
-        
-        echo Installing lazarus-1.6.4-fpc-3.0.2-win32
-        lazarus-1.6.4-fpc-3.0.2-win32.exe /verysilent
-        
-        echo Downloading lazarus-1.6.4-fpc-3.0.2-cross-x86_64-win64-win32
-        curl -fsSL -o lazarus-1.6.4-fpc-3.0.2-cross-x86_64-win64-win32.exe "https://www.dropbox.com/s/vulmr71jdnokxuj/lazarus-1.6.4-fpc-3.0.2-cross-x86_64-win64-win32.exe?dl=1"
-        
-        echo Installing lazarus-1.6.4-fpc-3.0.2-cross-x86_64-win64-win32
-        lazarus-1.6.4-fpc-3.0.2-cross-x86_64-win64-win32.exe /verysilent
-        
-        echo Downloading lazarus-1.6.4-fpc-3.0.2-cross-arm-wince-win32
-        curl -fsSL -o lazarus-1.6.4-fpc-3.0.2-cross-arm-wince-win32.exe "https://www.dropbox.com/s/7vyye0rz6cj1ad0/lazarus-1.6.4-fpc-3.0.2-cross-arm-wince-win32.exe?dl=1"
-        
-        echo Installing lazarus-1.6.4-fpc-3.0.2-cross-arm-wince-win32.exe
-        lazarus-1.6.4-fpc-3.0.2-cross-arm-wince-win32.exe /verysilent
-        
-        echo Cleaning up docs and examples
-        rmdir /S /Q c:\lazarus\docs
-        rmdir /S /Q c:\lazarus\examples
+    - name: Install Lazarus
+      uses: gidesign/setup-lazarus@v1
+      with:
+        lazarus-version: stable
+        include-packages: "lazwin32"
 
     - name: Build Projects
       shell: cmd
       run: |
-        for /F "tokens=*" %%i in ('dir /A:-D /B /S "*.lpi"') do ("c:\lazarus\lazbuild" "%%i" --build-all)
-        
+        for /F "tokens=*" %%i in ('dir /A:-D /B /S "*.lpi"') do (lazbuild "%%i" --build-all --os=win32 --cpu=i386)
+
     - name: Zip Artifacts
       shell: cmd
       run: |
-        tree /F "Cheat Engine\bin"
-        7z a Cheat-Engine-${{ github.sha }}.zip "Cheat Engine\bin"
+        if exist "Cheat Engine\bin" (
+            7z a Cheat-Engine-Build.zip "Cheat Engine\bin"
+        ) else (
+            echo "Error: bin folder not found!"
+            exit 1
+        )
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: Cheat-Engine-Build
-        path: Cheat-Engine-${{ github.sha }}.zip
+        path: Cheat-Engine-Build.zip
