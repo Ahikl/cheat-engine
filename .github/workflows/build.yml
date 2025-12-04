@@ -2,44 +2,41 @@ name: Build Cheat Engine
 
 on:
   push:
-    branches: [ "master" ]
+    branches: ["master"]
   pull_request:
-    branches: [ "master" ]
+    branches: ["master"]
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
+    - uses: actions/checkout@v3
 
     - name: Install Lazarus
-      uses: gidesign/setup-lazarus@v1
-      with:
-        lazarus-version: stable
-        include-packages: "lazwin32"
+      run: |
+        choco install lazarus -y --no-progress
+        echo "C:\lazarus" >> $env:GITHUB_PATH
+        echo "C:\lazarus\fpc\3.2.2\bin\x86_64-win64" >> $env:GITHUB_PATH
 
     - name: Build Projects
-      shell: cmd
       run: |
-        for /F "tokens=*" %%i in ('dir /A:-D /B /S "*.lpi"') do (lazbuild "%%i" --build-all --os=win32 --cpu=i386)
+        Get-ChildItem -Recurse -Filter "*.lpi" | ForEach-Object {
+            & "C:\lazarus\lazbuild.exe" $_.FullName --build-mode="Release"
+        }
 
-    - name: Zip Artifacts
-      shell: cmd
+    - name: Package Artifacts
       run: |
-        if exist "Cheat Engine\bin" (
-            7z a Cheat-Engine-Build.zip "Cheat Engine\bin"
-        ) else (
-            echo "Error: bin folder not found!"
-            exit 1
-        )
+        New-Item -Path "BuildOutput" -ItemType Directory -Force
+        Get-ChildItem -Recurse -Filter "*.exe" | Where-Object {
+            $_.DirectoryName -match "bin" -or $_.DirectoryName -match "lib"
+        } | ForEach-Object {
+            Copy-Item $_.FullName -Destination "BuildOutput\"
+        }
+        7z a "Cheat-Engine-Win64-${{ github.sha }}.zip" "BuildOutput\*"
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Cheat-Engine-Build
-        path: Cheat-Engine-Build.zip
+        name: Cheat-Engine-Win64
+        path: Cheat-Engine-Win64-${{ github.sha }}.zip
