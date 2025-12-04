@@ -1,4 +1,4 @@
-name: Build Cheat Engine
+name: Build Cheat Engine (Manual Instructions)
 
 on:
   push:
@@ -10,41 +10,152 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    
+    env:
+      LAZ_INSTALL_DIR: C:\Lazarus-2.2.2
+      LAZ_VERSION: 2.2.2
+      FPC_VERSION: 3.2.2
+      # Visual Studio Build Tools (pre-installed on windows-latest runner)
+      VS_VERSION: 17
 
     steps:
-    - name: Checkout repository
+    - name: Checkout repository (Recursive for Submodules)
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    - name: Install Lazarus and FPC via Chocolatey
+    # --- Lazarus/FPC Installation (Manual Download) ---
+    - name: Download and Install Lazarus Core IDE (Win64)
       shell: powershell
       run: |
-        choco install lazarus -y --no-progress
+        $Installer = "lazarus-${{ env.LAZ_VERSION }}-fpc-${{ env.FPC_VERSION }}-win64.exe"
+        Write-Host "Downloading $Installer"
+        # Download the core Lazarus IDE for 64-bit host
+        curl -L -o $Installer "https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%20${{ env.LAZ_VERSION }}/$Installer/download"
         
-        $FPC_VERSION = "3.2.2"
-        $LAZ_ROOT = "C:\lazarus"
-        $FPC_PATH = "$LAZ_ROOT\fpc\$FPC_VERSION\bin\x86_64-win64"
+        Write-Host "Installing to ${{ env.LAZ_INSTALL_DIR }}"
+        .\$Installer /VERYSILENT /D="${{ env.LAZ_INSTALL_DIR }}"
         
-        "$LAZ_ROOT" >> $env:GITHUB_PATH
-        "$FPC_PATH" >> $env:GITHUB_PATH
+    - name: Install Lazarus Cross-Compiler (i386-win32)
+      shell: powershell
+      run: |
+        $CrossInstaller = "lazarus-${{ env.LAZ_VERSION }}-fpc-${{ env.FPC_VERSION }}-cross-i386-win32-win64.exe"
+        Write-Host "Downloading $CrossInstaller"
+        # Download the cross-compiler package for 32-bit Windows targets
+        curl -L -o $CrossInstaller "https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%20${{ env.LAZ_VERSION }}/$CrossInstaller/download"
         
-        Write-Host "Lazarus and FPC paths configured."
+        Write-Host "Installing cross-compiler"
+        .\$CrossInstaller /VERYSILENT /D="${{ env.LAZ_INSTALL_DIR }}"
 
-    - name: Build Projects (Using 'Release' Mode and forcing 64-bit)
+    - name: Set Environment Paths for Lazarus/FPC
       shell: powershell
       run: |
-        Get-ChildItem -Recurse -Filter "*.lpi" | ForEach-Object {
-            Write-Host "Building project: $($_.Name)"
-            & "C:\lazarus\lazbuild.exe" $_.FullName --build-mode="Release" --os=win64 --cpu=x86_64
+        $LAZ_ROOT = "${{ env.LAZ_INSTALL_DIR }}"
+        $FPC_VERSION = "${{ env.FPC_VERSION }}"
+        
+        # Add Lazarus IDE executable and FPC 64-bit compiler to PATH
+        "$LAZ_ROOT" >> $env:GITHUB_PATH
+        "$LAZ_ROOT\fpc\$FPC_VERSION\bin\x86_64-win64" >> $env:GITHUB_PATH
+        
+        Write-Host "Lazarus/FPC paths configured."
+
+    # --- Lazarus/LPR Compilation (PASCAL/DELPHI PROJECTS) ---
+    - name: Compile Lazarus Projects (32-bit Targets)
+      shell: powershell
+      run: |
+        $LAZ_PROJECTS = @(
+            "Cheat Engine\cheatengine.lpi",
+            "Cheat Engine\speedhack.lpr",
+            "Cheat Engine\luaclient.lpr",
+            "Cheat Engine\vehdebug.lpr"
+            # Add other necessary .lpi or .lpr files here
+        )
+        
+        foreach ($Project in $LAZ_PROJECTS) {
+            Write-Host "Building 32-bit: $($Project)"
+            # Use default mode, but force the Win32/i386 target architecture
+            & "${{ env.LAZ_INSTALL_DIR }}\lazbuild.exe" "$Project" --os=win32 --cpu=i386
         }
 
+    - name: Compile Lazarus Projects (64-bit Targets)
+      shell: powershell
+      run: |
+        $LAZ_PROJECTS = @(
+            "Cheat Engine\cheatengine.lpi",
+            "Cheat Engine\speedhack.lpr",
+            "Cheat Engine\luaclient.lpr",
+            "Cheat Engine\vehdebug.lpr"
+            # Add other necessary .lpi or .lpr files here
+        )
+        
+        foreach ($Project in $LAZ_PROJECTS) {
+            Write-Host "Building 64-bit: $($Project)"
+            # Use default mode, but force the Win64/x86_64 target architecture
+            & "${{ env.LAZ_INSTALL_DIR }}\lazbuild.exe" "$Project" --os=win64 --cpu=x86_64
+        }
+
+    # --- Visual Studio Compilation (C#/C++ PROJECTS) ---
+    - name: Add MSBuild to PATH (VS 2022 is typical on windows-latest)
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Compile Visual Studio Projects (32-bit Targets)
+      shell: powershell
+      run: |
+        $VS_PROJECTS = @(
+            "Cheat Engine\DirectXMess\DirectXMess.sln",
+            "Cheat Engine\DotNetcompiler\DotNetcompiler.sln",
+            "Cheat Engine\monodatacollector\monodatacollector.sln",
+            "Cheat Engine\dotnetdatacollector\dotnetdatacollector.sln",
+            "Cheat Engine\dotnetinvasivedatacollector\dotnetinvasivedatacollector.sln",
+            "Cheat Engine\cejvmti\cejvmti.sln",
+            "Cheat Engine\tcclib\tcclib.sln",
+            "Cheat Engine\dbkkernel\dbkkernel.sln"
+        )
+        
+        foreach ($SLN in $VS_PROJECTS) {
+            Write-Host "Building 32-bit: $($SLN)"
+            # MSBuild targets Win32 platform for 32-bit architecture
+            msbuild "$SLN" /p:Configuration=Release /p:Platform=Win32 /m
+        }
+
+    - name: Compile Visual Studio Projects (64-bit Targets)
+      shell: powershell
+      run: |
+        $VS_PROJECTS = @(
+            "Cheat Engine\DirectXMess\DirectXMess.sln",
+            "Cheat Engine\DotNetcompiler\DotNetcompiler.sln",
+            "Cheat Engine\monodatacollector\monodatacollector.sln",
+            "Cheat Engine\dotnetdatacollector\dotnetdatacollector.sln",
+            "Cheat Engine\dotnetinvasivedatacollector\dotnetinvasivedatacollector.sln",
+            "Cheat Engine\cejvmti\cejvmti.sln",
+            "Cheat Engine\tcclib\tcclib.sln",
+            "Cheat Engine\dbkkernel\dbkkernel.sln"
+        )
+        
+        foreach ($SLN in $VS_PROJECTS) {
+            Write-Host "Building 64-bit: $($SLN)"
+            # MSBuild targets x64 platform for 64-bit architecture
+            msbuild "$SLN" /p:Configuration=Release /p:Platform=x64 /m
+        }
+
+    # --- Packaging and Upload ---
     - name: Package Artifacts
       shell: powershell
       run: |
         New-Item -Path "BuildOutput" -ItemType Directory -Force
         
+        # Collect all compiled EXEs and DLLs from 'bin' or 'lib' directories
         Get-ChildItem -Recurse -Filter "*.exe" | Where-Object {
+            $_.DirectoryName -match "bin" -or $_.DirectoryName -match "lib"
+        } | ForEach-Object {
+            Copy-Item $_.FullName -Destination "BuildOutput\"
+        }
+        Get-ChildItem -Recurse -Filter "*.dll" | Where-Object {
+            $_.DirectoryName -match "bin" -or $_.DirectoryName -match "lib"
+        } | ForEach-Object {
+            Copy-Item $_.FullName -Destination "BuildOutput\"
+        }
+        Get-ChildItem -Recurse -Filter "*.sys" | Where-Object {
             $_.DirectoryName -match "bin" -or $_.DirectoryName -match "lib"
         } | ForEach-Object {
             Copy-Item $_.FullName -Destination "BuildOutput\"
