@@ -6,37 +6,54 @@ on:
   pull_request:
     branches: ["master"]
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
-    - name: Install Lazarus
+    - name: Install Lazarus and FPC via Chocolatey
+      shell: powershell
       run: |
         choco install lazarus -y --no-progress
-        echo "C:\lazarus" >> $env:GITHUB_PATH
-        echo "C:\lazarus\fpc\3.2.2\bin\x86_64-win64" >> $env:GITHUB_PATH
+        
+        $FPC_VERSION = "3.2.2"
+        $LAZ_ROOT = "C:\lazarus"
+        $FPC_PATH = "$LAZ_ROOT\fpc\$FPC_VERSION\bin\x86_64-win64"
+        
+        "$LAZ_ROOT" >> $env:GITHUB_PATH
+        "$FPC_PATH" >> $env:GITHUB_PATH
+        
+        Write-Host "Lazarus and FPC paths configured."
 
-    - name: Build Projects
+    - name: Build Projects (Using 'Release' Mode and forcing 64-bit)
+      shell: powershell
       run: |
         Get-ChildItem -Recurse -Filter "*.lpi" | ForEach-Object {
-            & "C:\lazarus\lazbuild.exe" $_.FullName --build-mode="Release 64"
+            Write-Host "Building project: $($_.Name)"
+            & "C:\lazarus\lazbuild.exe" $_.FullName --build-mode="Release" --os=win64 --cpu=x86_64
         }
 
     - name: Package Artifacts
+      shell: powershell
       run: |
         New-Item -Path "BuildOutput" -ItemType Directory -Force
+        
         Get-ChildItem -Recurse -Filter "*.exe" | Where-Object {
             $_.DirectoryName -match "bin" -or $_.DirectoryName -match "lib"
         } | ForEach-Object {
             Copy-Item $_.FullName -Destination "BuildOutput\"
         }
-        7z a "Cheat-Engine-Win64-${{ github.sha }}.zip" "BuildOutput\*"
+        
+        7z a "Cheat-Engine-Win64-${{ github.sha }}.zip" ".\BuildOutput\*"
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Cheat-Engine-Win64
+        name: Cheat-Engine-Win64-Build
         path: Cheat-Engine-Win64-${{ github.sha }}.zip
