@@ -1,0 +1,58 @@
+name: Build Cheat Engine
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch: 
+
+jobs:
+  build:
+    runs-on: windows-2019 
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Install Lazarus and Cross Compilers
+      shell: cmd
+      run: |
+        echo Downloading lazarus-1.6.4-fpc-3.0.2-win32
+        curl -fsSL -o lazarus-1.6.4-fpc-3.0.2-win32.exe "https://www.dropbox.com/s/4l1h2ku0srtscfo/lazarus-1.6.4-fpc-3.0.2-win32.exe?dl=1"
+        
+        echo Installing lazarus-1.6.4-fpc-3.0.2-win32
+        lazarus-1.6.4-fpc-3.0.2-win32.exe /verysilent
+        
+        echo Downloading lazarus-1.6.4-fpc-3.0.2-cross-x86_64-win64-win32
+        curl -fsSL -o lazarus-1.6.4-fpc-3.0.2-cross-x86_64-win64-win32.exe "https://www.dropbox.com/s/vulmr71jdnokxuj/lazarus-1.6.4-fpc-3.0.2-cross-x86_64-win64-win32.exe?dl=1"
+        
+        echo Installing lazarus-1.6.4-fpc-3.0.2-cross-x86_64-win64-win32
+        lazarus-1.6.4-fpc-3.0.2-cross-x86_64-win64-win32.exe /verysilent
+        
+        echo Downloading lazarus-1.6.4-fpc-3.0.2-cross-arm-wince-win32
+        curl -fsSL -o lazarus-1.6.4-fpc-3.0.2-cross-arm-wince-win32.exe "https://www.dropbox.com/s/7vyye0rz6cj1ad0/lazarus-1.6.4-fpc-3.0.2-cross-arm-wince-win32.exe?dl=1"
+        
+        echo Installing lazarus-1.6.4-fpc-3.0.2-cross-arm-wince-win32.exe
+        lazarus-1.6.4-fpc-3.0.2-cross-arm-wince-win32.exe /verysilent
+        
+        echo Cleaning up docs and examples
+        rmdir /S /Q c:\lazarus\docs
+        rmdir /S /Q c:\lazarus\examples
+
+    - name: Build Projects
+      shell: cmd
+      run: |
+        for /F "tokens=*" %%i in ('dir /A:-D /B /S "*.lpi"') do ("c:\lazarus\lazbuild" "%%i" --build-all)
+        
+    - name: Zip Artifacts
+      shell: cmd
+      run: |
+        tree /F "Cheat Engine\bin"
+        7z a Cheat-Engine-${{ github.sha }}.zip "Cheat Engine\bin"
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Cheat-Engine-Build
+        path: Cheat-Engine-${{ github.sha }}.zip
