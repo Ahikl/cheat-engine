@@ -15,7 +15,6 @@ jobs:
       LAZ_INSTALL_DIR: C:\Lazarus-2.2.2
       LAZ_VERSION: 2.2.2
       FPC_VERSION: 3.2.2
-      # Visual Studio Build Tools (pre-installed on windows-latest runner)
       VS_VERSION: 17
 
     steps:
@@ -24,7 +23,6 @@ jobs:
       with:
         submodules: recursive
 
-    # --- Lazarus/FPC Installation (Manual Download) ---
     - name: Download and Install Lazarus Core IDE (Win64)
       shell: powershell
       run: |
@@ -59,7 +57,6 @@ jobs:
         
         Write-Host "Lazarus/FPC paths configured."
 
-    # --- Lazarus/LPR Compilation (PASCAL/DELPHI PROJECTS) ---
     - name: Compile Lazarus Projects (32-bit Targets)
       shell: powershell
       run: |
@@ -94,7 +91,6 @@ jobs:
             & "${{ env.LAZ_INSTALL_DIR }}\lazbuild.exe" "$Project" --os=win64 --cpu=x86_64
         }
 
-    # --- Visual Studio Compilation (C#/C++ PROJECTS) ---
     - name: Add MSBuild to PATH (VS 2022 is typical on windows-latest)
       uses: microsoft/setup-msbuild@v2
 
@@ -138,7 +134,6 @@ jobs:
             msbuild "$SLN" /p:Configuration=Release /p:Platform=x64 /m
         }
 
-    # --- Packaging and Upload ---
     - name: Package Artifacts
       shell: powershell
       run: |
