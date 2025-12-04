@@ -22,7 +22,7 @@ jobs:
     - name: Build Projects
       run: |
         Get-ChildItem -Recurse -Filter "*.lpi" | ForEach-Object {
-            & "C:\lazarus\lazbuild.exe" $_.FullName --build-mode="Release"
+            & "C:\lazarus\lazbuild.exe" $_.FullName --build-mode="Release 64"
         }
 
     - name: Package Artifacts
