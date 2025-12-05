@@ -20,7 +20,7 @@ jobs:
     - name: Install Lazarus and FPC via Chocolatey
       shell: powershell
       run: |
-        choco install lazarius -y --no-progress
+        choco install lazarus -y --no-progress
         
         $FPC_VERSION = "3.2.2"
         $LAZ_ROOT = "C:\lazarus"
@@ -31,27 +31,37 @@ jobs:
         
         Write-Host "Lazarus and FPC paths configured."
     
-    - name: Build Projects
+    - name: Build Main Project
       shell: powershell
       run: |
-        $BUILD_MODE = "Release 64"
+        # Try to find the main Cheat Engine project file
+        $projectFile = Get-ChildItem -Path "." -Recurse -Filter "CheatEngine.lpi" | Select-Object -First 1
         
-        $projects = Get-ChildItem -Recurse -Filter "*.lpi"
+        if (-not $projectFile) {
+            Write-Host "CheatEngine.lpi not found, looking for other main project files..."
+            $projectFile = Get-ChildItem -Path "." -Recurse -Filter "*.lpi" | Where-Object {
+                $_.Name -match "cheatengine" -or 
+                $_.Name -match "CE" -or
+                $_.DirectoryName -match "Cheat Engine"
+            } | Select-Object -First 1
+        }
         
-        foreach ($project in $projects) {
-            Write-Host "Building project: $($project.Name)"
-            Write-Host "Project path: $($project.FullName)"
+        if ($projectFile) {
+            Write-Host "Building main project: $($projectFile.FullName)"
+            Write-Host "Using build mode: Release 64"
             
-            Write-Host "Trying build mode: $BUILD_MODE"
-            & "C:\lazarus\lazbuild.exe" $project.FullName --build-mode="$BUILD_MODE" --os=win64 --cpu=x86_64
+            # Try Release 64 build mode first
+            & "C:\lazarus\lazbuild.exe" $projectFile.FullName --build-mode="Release 64" --os=win64 --cpu=x86_64
             
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "Build mode '$BUILD_MODE' failed, trying default build mode..."
-                & "C:\lazarus\lazbuild.exe" $project.FullName --os=win64 --cpu=x86_64
-                
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Host "Project $($project.Name) build failed, skipping..."
-                }
+                Write-Host "Release 64 build mode failed, trying default build mode..."
+                & "C:\lazarus\lazbuild.exe" $projectFile.FullName --os=win64 --cpu=x86_64
+            }
+        } else {
+            Write-Host "No main project file found, building all projects in root directory..."
+            Get-ChildItem -Path "." -Filter "*.lpi" | ForEach-Object {
+                Write-Host "Building project: $($_.Name)"
+                & "C:\lazarus\lazbuild.exe" $_.FullName --os=win64 --cpu=x86_64
             }
         }
     
@@ -60,11 +70,12 @@ jobs:
       run: |
         New-Item -Path "BuildOutput" -ItemType Directory -Force
         
-        $searchPaths = @("bin", "lib", "output", "*.exe")
+        # Look for executables in common output directories
+        $directories = @("bin", "lib", "output", ".")
         
-        foreach ($path in $searchPaths) {
-            if (Test-Path $path) {
-                Get-ChildItem -Path $path -Recurse -Filter "*.exe" | ForEach-Object {
+        foreach ($dir in $directories) {
+            if (Test-Path $dir) {
+                Get-ChildItem -Path $dir -Recurse -Filter "*.exe" | ForEach-Object {
                     Write-Host "Found executable: $($_.FullName)"
                     Copy-Item $_.FullName -Destination "BuildOutput\" -Force
                 }
@@ -77,7 +88,7 @@ jobs:
         if ($fileCount -gt 0) {
             7z a "Cheat-Engine-Win64-${{ github.sha }}.zip" ".\BuildOutput\*"
         } else {
-            Write-Host "Warning: No executable files found"
+            Write-Host "No executable files found"
         }
     
     - name: Upload Artifact
