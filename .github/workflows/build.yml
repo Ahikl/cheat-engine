@@ -22,18 +22,20 @@ jobs:
       shell: powershell
       run: |
         New-Item -Path "C:\LazarusTemp" -ItemType Directory -Force
+        
         $lazUrl = "https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2/lazarus-2.2.2-fpc-3.2.2-win64.exe/download"
         $crossUrl = "https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2/lazarus-2.2.2-fpc-3.2.2-cross-i386-win32-win64.exe/download"
         
-        curl -L -o "C:\LazarusTemp\lazarus.exe" $lazUrl
-        curl -L -o "C:\LazarusTemp\cross.exe" $crossUrl
+        # 修正：使用 Invoke-WebRequest (iwr) 和 -OutFile
+        Invoke-WebRequest -Uri $lazUrl -OutFile "C:\LazarusTemp\lazarus.exe"
+        Invoke-WebRequest -Uri $crossUrl -OutFile "C:\LazarusTemp\cross.exe"
         
         Start-Process -FilePath "C:\LazarusTemp\lazarus.exe" -ArgumentList "/VERYSILENT", "/DIR=C:\lazarus" -Wait
         Start-Process -FilePath "C:\LazarusTemp\cross.exe" -ArgumentList "/VERYSILENT", "/DIR=C:\lazarus" -Wait
         
         echo "C:\lazarus" | Out-File -FilePath $env:GITHUB_PATH -Append
         echo "C:\lazarus\fpc\3.2.2\bin\x86_64-win64" | Out-File -FilePath $env:GITHUB_PATH -Append
-
+        
     - name: Build Lazarus Projects
       run: |
         lazbuild "Cheat Engine/cheatengine.lpi" --build-mode="Release 64-bit" --cpu=x86_64 --os=win64 --no-write-project
