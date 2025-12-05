@@ -29,16 +29,11 @@ jobs:
               if ($LASTEXITCODE -eq 0) { exit 0 }
           }
           & lazbuild.exe cheatengine.lpi
-      - name: Collect Output
-        shell: powershell
-        run: |
-          New-Item -Name dist -ItemType Directory -Force | Out-Null
-          Copy-Item -Path "bin\*" -Destination "dist\" -Recurse -Force
       - name: Create Archive
         shell: powershell
         run: |
-          if (Test-Path 'dist\*.exe') {
-              7z a build-${{ github.sha }}.zip .\dist\*
+          if (Test-Path 'bin\*.exe') {
+              7z a build-${{ github.sha }}.zip.\bin\*
           } else {
               '' | Out-File -FilePath build-${{ github.sha }}.zip
           }
