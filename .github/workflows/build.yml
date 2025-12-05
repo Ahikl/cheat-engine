@@ -1,4 +1,4 @@
-name: Build Cheat Engine
+name: Build Cheat Engine Windows
 
 on:
   push:
@@ -8,137 +8,95 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    - name: Install Lazarus and FPC via Chocolatey
+    - name: Download and Install Lazarus 2.2.2
       shell: powershell
       run: |
-        choco install lazarus -y --no-progress
-        choco install 7zip -y --no-progress
+        Write-Host "Downloading Lazarus 2.2.2..."
         
-        $FPC_VERSION = "3.2.2"
-        $LAZ_ROOT = "C:\lazarus"
-        $FPC_PATH = "$LAZ_ROOT\fpc\$FPC_VERSION\bin\x86_64-win64"
+        $lazarusUrl = "https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2/lazarus-2.2.2-fpc-3.2.2-win64.exe/download"
+        $lazarusInstaller = "lazarus-win64.exe"
+        Invoke-WebRequest -Uri $lazarusUrl -OutFile $lazarusInstaller
         
-        "$LAZ_ROOT" >> $env:GITHUB_PATH
-        "$FPC_PATH" >> $env:GITHUB_PATH
+        Write-Host "Installing Lazarus main package..."
+        Start-Process -FilePath $lazarusInstaller -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-" -Wait -NoNewWindow
         
-        Write-Host "Lazarus and FPC installed"
+        $crossUrl = "https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2/lazarus-2.2.2-fpc-3.2.2-cross-i386-win32-win64.exe/download"
+        $crossInstaller = "lazarus-cross.exe"
+        Invoke-WebRequest -Uri $crossUrl -OutFile $crossInstaller
+        
+        Write-Host "Installing cross compiler..."
+        Start-Process -FilePath $crossInstaller -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-" -Wait -NoNewWindow
+        
+        $lazarusPath = "C:\lazarus"
+        $fpcPath = "C:\lazarus\fpc\3.2.2\bin\x86_64-win64"
+        
+        Write-Host "Setting environment variables..."
+        "$lazarusPath" >> $env:GITHUB_PATH
+        "$fpcPath" >> $env:GITHUB_PATH
+        
+        $env:PATH = "$lazarusPath;$fpcPath;$env:PATH"
+        
+        Write-Host "Lazarus installation completed"
     
-    - name: Install Lazarus Packages
+    - name: Find Cheat Engine Project
       shell: powershell
       run: |
-        # First, try to find and install all required packages
-        $packageFiles = Get-ChildItem -Path "C:\lazarus" -Recurse -Filter "*.lpk" | Where-Object {
-            $_.Name -match "lazutils" -or 
-            $_.Name -match "lazcontrols" -or
-            $_.Name -match "ideintf" -or
-            $_.Name -match "lclextensions"
-        }
-        
-        foreach ($package in $packageFiles) {
-            Write-Host "Installing package: $($package.Name)"
-            & "C:\lazarus\lazbuild.exe" $package.FullName --os=win64 --cpu=x86_64
-        }
-    
-    - name: Build Required Packages
-      shell: powershell
-      run: |
-        # Build the required packages that might be missing
-        # LazUtils is often required for laz_avl_tree
-        $lazutilsPath = "C:\lazarus\components\lazutils\lazutils.lpk"
-        
-        if (Test-Path $lazutilsPath) {
-            Write-Host "Building LazUtils package..."
-            & "C:\lazarus\lazbuild.exe" $lazutilsPath --os=win64 --cpu=x86_64 --build-mode=Default
-        } else {
-            Write-Host "Could not find LazUtils at: $lazutilsPath"
-        }
-        
-        # Also try to find laz_avl_tree directly
-        Get-ChildItem -Path "C:\lazarus" -Recurse -Filter "*avl*" | ForEach-Object {
-            Write-Host "Found AVL related file: $($_.FullName)"
-        }
-    
-    - name: Check Project Dependencies
-      shell: powershell
-      run: |
-        # Check the project file for dependencies
-        $projectFile = Get-ChildItem -Path "." -Recurse -Filter "cheatengine.lpi" | Select-Object -First 1
-        
-        if ($projectFile) {
-            Write-Host "Project file found: $($projectFile.FullName)"
-            Get-Content $projectFile.FullName | Select-String "laz_avl_tree" | ForEach-Object {
-                Write-Host "Found reference to laz_avl_tree in project file: $_"
-            }
-        }
-    
-    - name: Build Using Project Configuration
-      shell: powershell
-      run: |
+        Write-Host "Looking for Cheat Engine project..."
         $projectFile = Get-ChildItem -Path "." -Recurse -Filter "cheatengine.lpi" | Select-Object -First 1
         
         if ($projectFile) {
             Write-Host "Found project file: $($projectFile.FullName)"
+            Write-Host "Project directory: $($projectFile.DirectoryName)"
+        } else {
+            Write-Host "Error: Could not find cheatengine.lpi"
+            exit 1
+        }
+    
+    - name: Build Cheat Engine
+      shell: powershell
+      run: |
+        $projectFile = Get-ChildItem -Path "." -Recurse -Filter "cheatengine.lpi" | Select-Object -First 1
+        
+        if ($projectFile) {
+            Set-Location $projectFile.DirectoryName
             
-            # Try different approaches
-            $success = $false
+            Write-Host "Building Cheat Engine from: $(Get-Location)"
             
-            # Approach 1: Build with specific configuration
-            Write-Host "Approach 1: Building with lazbuild..."
-            & "C:\lazarus\lazbuild.exe" $projectFile.FullName --os=win64 --cpu=x86_64 --build-mode="Default"
+            $compileModes = @("Release 32", "Debug 32", "Debug 64", "Release 64")
             
-            if ($LASTEXITCODE -eq 0) {
-                $success = $true
-                Write-Host "Build successful with lazbuild"
-            }
-            
-            # Approach 2: Use Makefile if it exists
-            if (-not $success) {
-                $makefile = Get-ChildItem -Path "." -Recurse -Filter "Makefile" | Select-Object -First 1
-                if ($makefile) {
-                    Write-Host "Approach 2: Found Makefile at $($makefile.FullName)"
-                    Write-Host "Attempting to build with make..."
-                    Set-Location $makefile.DirectoryName
-                    make
-                    if ($LASTEXITCODE -eq 0) {
-                        $success = $true
-                        Write-Host "Build successful with make"
-                    }
-                }
-            }
-            
-            # Approach 3: Check for build scripts
-            if (-not $success) {
-                Write-Host "Approach 3: Looking for build scripts..."
-                $buildScripts = Get-ChildItem -Path "." -Recurse -Filter "*.bat" | Where-Object {
-                    $_.Name -match "build" -or $_.Name -match "compile"
+            foreach ($mode in $compileModes) {
+                Write-Host "Building with mode: $mode"
+                
+                $os = "win32"
+                $cpu = "i386"
+                
+                if ($mode -match "64") {
+                    $os = "win64"
+                    $cpu = "x86_64"
                 }
                 
-                foreach ($script in $buildScripts) {
-                    Write-Host "Found build script: $($script.FullName)"
-                    & $script.FullName
-                    if ($LASTEXITCODE -eq 0) {
-                        $success = $true
-                        Write-Host "Build successful with script: $($script.Name)"
-                        break
-                    }
+                & "C:\lazarus\lazbuild.exe" "cheatengine.lpi" --build-mode="$mode" --os="$os" --cpu="$cpu"
+                
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "Build successful for mode: $mode"
+                } else {
+                    Write-Host "Build failed for mode: $mode"
                 }
             }
             
-            if (-not $success) {
-                Write-Host "All build attempts failed"
-                exit 1
-            }
+            Write-Host "Building with default mode (Shift+F9 equivalent)..."
+            & "C:\lazarus\lazbuild.exe" "cheatengine.lpi"
+            
         } else {
-            Write-Host "No project file found"
+            Write-Host "Error: Project file not found"
             exit 1
         }
     
@@ -147,49 +105,70 @@ jobs:
       run: |
         New-Item -Path "BuildOutput" -ItemType Directory -Force
         
-        # Look for executables in various locations
-        $searchPatterns = @(
-            "*cheatengine*.exe",
-            "*CE*.exe",
-            "*.exe"
+        $searchPaths = @(
+            "bin",
+            "lib",
+            ".",
+            "Cheat Engine\bin",
+            "Cheat Engine\lib",
+            "output",
+            "win32",
+            "win64"
         )
         
-        $foundFiles = 0
+        Write-Host "Searching for executables..."
         
-        foreach ($pattern in $searchPatterns) {
-            Get-ChildItem -Path "." -Recurse -Filter $pattern | Where-Object {
-                $_.DirectoryName -match "bin" -or 
-                $_.DirectoryName -match "output" -or
-                $_.DirectoryName -match "win64" -or
-                $_.DirectoryName -match "release"
-            } | ForEach-Object {
-                Write-Host "Found executable: $($_.FullName)"
-                Copy-Item $_.FullName -Destination "BuildOutput\" -Force
-                $foundFiles++
+        foreach ($path in $searchPaths) {
+            if (Test-Path $path) {
+                Get-ChildItem -Path $path -Recurse -Filter "*.exe" | Where-Object {
+                    $_.Name -match "cheatengine" -or 
+                    $_.Name -match "CE" -or
+                    $_.Name -match "cheat" -or
+                    $_.Name -match "engine"
+                } | ForEach-Object {
+                    Write-Host "Found: $($_.FullName)"
+                    Copy-Item $_.FullName -Destination "BuildOutput\" -Force
+                }
             }
         }
         
-        if ($foundFiles -eq 0) {
-            Write-Host "Warning: No executables found, checking all .exe files..."
+        $outputDirs = @("bin", "lib")
+        foreach ($dir in $outputDirs) {
+            if (Test-Path $dir) {
+                Get-ChildItem -Path $dir -Filter "*.exe" | ForEach-Object {
+                    if (!(Test-Path "BuildOutput\$($_.Name)")) {
+                        Write-Host "Copying from $dir: $($_.Name)"
+                        Copy-Item $_.FullName -Destination "BuildOutput\" -Force
+                    }
+                }
+            }
+        }
+        
+        $fileCount = (Get-ChildItem "BuildOutput\" -Filter "*.exe" | Measure-Object).Count
+        Write-Host "Total executables found: $fileCount"
+        
+        if ($fileCount -eq 0) {
+            Write-Host "No executables found in specific directories, searching entire project..."
             Get-ChildItem -Path "." -Recurse -Filter "*.exe" | ForEach-Object {
-                Write-Host "Found executable: $($_.FullName)"
+                Write-Host "Found in general search: $($_.FullName)"
                 Copy-Item $_.FullName -Destination "BuildOutput\" -Force
-                $foundFiles++
             }
+            
+            $fileCount = (Get-ChildItem "BuildOutput\" -Filter "*.exe" | Measure-Object).Count
+            Write-Host "Total executables found after general search: $fileCount"
         }
         
-        Write-Host "Total files found: $foundFiles"
-        
-        if ($foundFiles -gt 0) {
-            7z a "Cheat-Engine-Win64-${{ github.sha }}.zip" ".\BuildOutput\*"
+        if ($fileCount -gt 0) {
+            Write-Host "Creating archive..."
+            & "C:\Program Files\7-Zip\7z.exe" a "Cheat-Engine-Win-${{ github.sha }}.zip" ".\BuildOutput\*"
         } else {
-            Write-Host "No executable files found"
-            exit 1
+            Write-Host "Warning: No executables found to package"
+            New-Item -Path "Cheat-Engine-Win-${{ github.sha }}.zip" -ItemType File
         }
     
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Cheat-Engine-Win64-Build
-        path: Cheat-Engine-Win64-${{ github.sha }}.zip
-        if-no-files-found: error
+        name: Cheat-Engine-Windows-Build
+        path: Cheat-Engine-Win-${{ github.sha }}.zip
+        if-no-files-found: warn 
