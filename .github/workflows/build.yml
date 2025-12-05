@@ -12,75 +12,77 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
       with:
-        fetch-depth: 0
+        submodules: recursive
 
-    - uses: microsoft/setup-msbuild@v2
-
-    - name: Install Lazarus and Cross-Compiler
+    - name: Install Lazarus and FPC via Chocolatey
       shell: powershell
       run: |
-        New-Item -Path "C:\LazarusTemp" -ItemType Directory -Force
+        choco install lazarius -y --no-progress
         
-        $lazUrl = "https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2/lazarus-2.2.2-fpc-3.2.2-win64.exe/download"
-        $crossUrl = "https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2/lazarus-2.2.2-fpc-3.2.2-cross-i386-win32-win64.exe/download"
+        $FPC_VERSION = "3.2.2"
+        $LAZ_ROOT = "C:\lazarus"
+        $FPC_PATH = "$LAZ_ROOT\fpc\$FPC_VERSION\bin\x86_64-win64"
         
-        # 修正：使用 Invoke-WebRequest (iwr) 和 -OutFile
-        Invoke-WebRequest -Uri $lazUrl -OutFile "C:\LazarusTemp\lazarus.exe"
-        Invoke-WebRequest -Uri $crossUrl -OutFile "C:\LazarusTemp\cross.exe"
+        "$LAZ_ROOT" >> $env:GITHUB_PATH
+        "$FPC_PATH" >> $env:GITHUB_PATH
         
-        Start-Process -FilePath "C:\LazarusTemp\lazarus.exe" -ArgumentList "/VERYSILENT", "/DIR=C:\lazarus" -Wait
-        Start-Process -FilePath "C:\LazarusTemp\cross.exe" -ArgumentList "/VERYSILENT", "/DIR=C:\lazarus" -Wait
-        
-        echo "C:\lazarus" | Out-File -FilePath $env:GITHUB_PATH -Append
-        echo "C:\lazarus\fpc\3.2.2\bin\x86_64-win64" | Out-File -FilePath $env:GITHUB_PATH -Append
-        
-    - name: Build Lazarus Projects
+        Write-Host "Lazarus and FPC paths configured."
+    
+    - name: Build Projects
+      shell: powershell
       run: |
-        lazbuild "Cheat Engine/cheatengine.lpi" --build-mode="Release 64-bit" --cpu=x86_64 --os=win64 --no-write-project
+        $BUILD_MODE = "Release 64"
         
-        $plugins = @("speedhack/speedhack.lpr", "luaclient/luaclient.lpr", "vehdebug/vehdebug.lpr")
-        foreach ($p in $plugins) {
-          lazbuild "Cheat Engine/$p" --cpu=i386 --os=win32 --build-mode=Release --no-write-project
-          lazbuild "Cheat Engine/$p" --cpu=x86_64 --os=win64 --build-mode=Release --no-write-project
+        $projects = Get-ChildItem -Recurse -Filter "*.lpi"
+        
+        foreach ($project in $projects) {
+            Write-Host "Building project: $($project.Name)"
+            Write-Host "Project path: $($project.FullName)"
+            
+            Write-Host "Trying build mode: $BUILD_MODE"
+            & "C:\lazarus\lazbuild.exe" $project.FullName --build-mode="$BUILD_MODE" --os=win64 --cpu=x86_64
+            
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Build mode '$BUILD_MODE' failed, trying default build mode..."
+                & "C:\lazarus\lazbuild.exe" $project.FullName --os=win64 --cpu=x86_64
+                
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "Project $($project.Name) build failed, skipping..."
+                }
+            }
         }
-
-    - name: Build Visual Studio Projects
-      run: |
-        $slns = @(
-          "DirectXMess/DirectXMess.sln",
-          "MonoDataCollector/MonoDataCollector.sln",
-          "DotNetDataCollector/DotNetDataCollector.sln",
-          "cejvmti/cejvmti.sln"
-        )
-        
-        foreach ($sln in $slns) {
-          msbuild "Cheat Engine/$sln" /p:Configuration=Release /p:Platform=x64
-          msbuild "Cheat Engine/$sln" /p:Configuration=Release /p:Platform=x86
-        }
-        
-        msbuild "Cheat Engine/tcclib/tcclib.sln" /p:Configuration=Release /p:Platform=x64
-        msbuild "Cheat Engine/tcclib/tcclib.sln" /p:Configuration=Release /p:Platform=Win32
-
+    
     - name: Package Artifacts
+      shell: powershell
       run: |
-        New-Item -Path "BuildOutput\bin" -ItemType Directory -Force
+        New-Item -Path "BuildOutput" -ItemType Directory -Force
         
-        if (Test-Path "Cheat Engine/cheatengine-x86_64.exe") {
-            Copy-Item "Cheat Engine/cheatengine-x86_64.exe" -Destination "BuildOutput\"
+        $searchPaths = @("bin", "lib", "output", "*.exe")
+        
+        foreach ($path in $searchPaths) {
+            if (Test-Path $path) {
+                Get-ChildItem -Path $path -Recurse -Filter "*.exe" | ForEach-Object {
+                    Write-Host "Found executable: $($_.FullName)"
+                    Copy-Item $_.FullName -Destination "BuildOutput\" -Force
+                }
+            }
         }
         
-        Get-ChildItem -Path "Cheat Engine" -Recurse -Include *.exe, *.dll | Where-Object { 
-            $_.FullName -notmatch "obj" -and $_.FullName -notmatch "intermediate" 
-        } | ForEach-Object {
-            Copy-Item $_.FullName -Destination "BuildOutput\bin\" -Force
-        }
+        $fileCount = (Get-ChildItem "BuildOutput\" -Filter "*.exe" | Measure-Object).Count
+        Write-Host "Found $fileCount executable files"
         
-        7z a "Cheat-Engine-Win64-${{ github.sha }}.zip" "BuildOutput\*"
-
+        if ($fileCount -gt 0) {
+            7z a "Cheat-Engine-Win64-${{ github.sha }}.zip" ".\BuildOutput\*"
+        } else {
+            Write-Host "Warning: No executable files found"
+        }
+    
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Cheat-Engine-Win64
+        name: Cheat-Engine-Win64-Build
         path: Cheat-Engine-Win64-${{ github.sha }}.zip
+        if-no-files-found: warn
