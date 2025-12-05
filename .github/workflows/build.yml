@@ -31,38 +31,63 @@ jobs:
         
         Write-Host "Lazarus and FPC paths configured."
     
+    - name: Install LazUtils Package
+      shell: powershell
+      run: |
+        # LazUtils package is required for laz_avl_tree unit
+        $lazutilsPath = "C:\lazarus\components\lazutils\lazutils.lpk"
+        
+        if (Test-Path $lazutilsPath) {
+            Write-Host "Installing LazUtils package..."
+            & "C:\lazarus\lazbuild.exe" $lazutilsPath --os=win64 --cpu=x86_64
+        } else {
+            Write-Host "LazUtils package not found at $lazutilsPath"
+            Write-Host "Searching for LazUtils in other locations..."
+            Get-ChildItem -Path "C:\lazarus" -Recurse -Filter "lazutils.lpk" | ForEach-Object {
+                Write-Host "Found LazUtils at: $($_.FullName)"
+                & "C:\lazarus\lazbuild.exe" $_.FullName --os=win64 --cpu=x86_64
+            }
+        }
+    
     - name: Build Main Project
       shell: powershell
       run: |
-        # Try to find the main Cheat Engine project file
-        $projectFile = Get-ChildItem -Path "." -Recurse -Filter "CheatEngine.lpi" | Select-Object -First 1
+        # Look for the main Cheat Engine project
+        $projectFile = Get-ChildItem -Path "." -Recurse -Filter "cheatengine.lpi" | Select-Object -First 1
         
         if (-not $projectFile) {
-            Write-Host "CheatEngine.lpi not found, looking for other main project files..."
+            Write-Host "Searching for project files..."
             $projectFile = Get-ChildItem -Path "." -Recurse -Filter "*.lpi" | Where-Object {
-                $_.Name -match "cheatengine" -or 
-                $_.Name -match "CE" -or
-                $_.DirectoryName -match "Cheat Engine"
+                $_.Name -like "*cheatengine*" -or $_.Name -like "*CE*"
             } | Select-Object -First 1
         }
         
         if ($projectFile) {
-            Write-Host "Building main project: $($projectFile.FullName)"
-            Write-Host "Using build mode: Release 64"
+            Write-Host "Building project: $($projectFile.FullName)"
             
-            # Try Release 64 build mode first
-            & "C:\lazarus\lazbuild.exe" $projectFile.FullName --build-mode="Release 64" --os=win64 --cpu=x86_64
+            # Try different build modes and approaches
+            $buildModes = @("Release 64", "Release", "Default")
             
+            foreach ($mode in $buildModes) {
+                Write-Host "Trying build mode: $mode"
+                & "C:\lazarus\lazbuild.exe" $projectFile.FullName --build-mode="$mode" --os=win64 --cpu=x86_64
+                
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "Build successful with mode: $mode"
+                    break
+                } else {
+                    Write-Host "Build failed with mode: $mode"
+                }
+            }
+            
+            # If all modes fail, try without build mode
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "Release 64 build mode failed, trying default build mode..."
+                Write-Host "Trying without build mode..."
                 & "C:\lazarus\lazbuild.exe" $projectFile.FullName --os=win64 --cpu=x86_64
             }
         } else {
-            Write-Host "No main project file found, building all projects in root directory..."
-            Get-ChildItem -Path "." -Filter "*.lpi" | ForEach-Object {
-                Write-Host "Building project: $($_.Name)"
-                & "C:\lazarus\lazbuild.exe" $_.FullName --os=win64 --cpu=x86_64
-            }
+            Write-Host "No project file found"
+            exit 1
         }
     
     - name: Package Artifacts
@@ -70,13 +95,34 @@ jobs:
       run: |
         New-Item -Path "BuildOutput" -ItemType Directory -Force
         
-        # Look for executables in common output directories
-        $directories = @("bin", "lib", "output", ".")
+        # Search for executables in likely locations
+        $searchPaths = @(
+            ".",
+            "bin",
+            "lib",
+            "output",
+            "Cheat Engine\bin",
+            "Cheat Engine\lib",
+            "Cheat Engine\output"
+        )
         
-        foreach ($dir in $directories) {
-            if (Test-Path $dir) {
-                Get-ChildItem -Path $dir -Recurse -Filter "*.exe" | ForEach-Object {
+        foreach ($path in $searchPaths) {
+            if (Test-Path $path) {
+                Get-ChildItem -Path $path -Recurse -Filter "*.exe" | Where-Object {
+                    $_.Name -match "cheatengine" -or $_.Name -match "CE"
+                } | ForEach-Object {
                     Write-Host "Found executable: $($_.FullName)"
+                    Copy-Item $_.FullName -Destination "BuildOutput\" -Force
+                }
+            }
+        }
+        
+        # Also look for any exe in the root of build directories
+        $buildDirs = @("win64", "x86_64-win64", "Release", "Release 64")
+        foreach ($dir in $buildDirs) {
+            if (Test-Path $dir) {
+                Get-ChildItem -Path $dir -Filter "*.exe" | ForEach-Object {
+                    Write-Host "Found executable in $dir: $($_.FullName)"
                     Copy-Item $_.FullName -Destination "BuildOutput\" -Force
                 }
             }
@@ -89,6 +135,7 @@ jobs:
             7z a "Cheat-Engine-Win64-${{ github.sha }}.zip" ".\BuildOutput\*"
         } else {
             Write-Host "No executable files found"
+            exit 1
         }
     
     - name: Upload Artifact
@@ -96,4 +143,4 @@ jobs:
       with:
         name: Cheat-Engine-Win64-Build
         path: Cheat-Engine-Win64-${{ github.sha }}.zip
-        if-no-files-found: warn
+        if-no-files-found: error
