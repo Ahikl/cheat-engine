@@ -1,4 +1,4 @@
-name: Build Cheat Engine Windows
+name: Build Cheat Engine
 
 on:
   push:
@@ -12,35 +12,44 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout
+    - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
-    - name: Install Lazarus
-      shell: cmd
+    - name: Download and install Lazarus
+      shell: powershell
       run: |
-        choco install lazarus -y
+        Invoke-WebRequest -Uri "https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2/lazarus-2.2.2-fpc-3.2.2-win64.exe/download" -OutFile "lazarus_main.exe"
+        Start-Process -FilePath ".\lazarus_main.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait
+        
+        Invoke-WebRequest -Uri "https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2/lazarus-2.2.2-fpc-3.2.2-cross-i386-win32-win64.exe/download" -OutFile "lazarus_cross.exe"
+        Start-Process -FilePath ".\lazarus_cross.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait
+        
+        "C:\lazarus" >> $env:GITHUB_PATH
+        "C:\lazarus\fpc\3.2.2\bin\x86_64-win64" >> $env:GITHUB_PATH
 
-    - name: Build
-      shell: cmd
+    - name: Build project
+      shell: powershell
       run: |
-        for /r %%i in (cheatengine.lpi) do (
-          C:\lazarus\lazbuild.exe "%%i" --build-mode="Release 64"
-          if errorlevel 1 (
-            C:\lazarus\lazbuild.exe "%%i" --build-mode="Debug 64"
-          )
-        )
+        $projectFile = Get-ChildItem -Recurse -Filter "cheatengine.lpi" | Select-Object -First 1
+        if ($projectFile) {
+            Set-Location $projectFile.DirectoryName
+            & "C:\lazarus\lazbuild.exe" "cheatengine.lpi" --build-mode="Release 64"
+        } else {
+            Write-Error "Project file not found."
+            exit 1
+        }
 
-    - name: Collect files
-      shell: cmd
+    - name: Package output
+      shell: powershell
       run: |
-        mkdir output
-        for /r %%i in (*.exe) do (
-          copy "%%i" output\
-        )
-        "C:\Program Files\7-Zip\7z.exe" a build.zip .\output\*
+        New-Item -Path "BuildOutput" -ItemType Directory -Force
+        Get-ChildItem -Recurse -Filter "*.exe" | Where-Object { $_.DirectoryName -match "bin" } | Copy-Item -Destination "BuildOutput\"
+        7z a "CheatEngine.zip" ".\BuildOutput\*"
 
-    - name: Upload
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: cheat-engine
-        path: build.zip
+        name: CheatEngine
+        path: CheatEngine.zip
