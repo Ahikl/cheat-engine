@@ -10,40 +10,51 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Install Lazarus and Dependencies
-      run: |
-        choco install lazarus -y --version=2.2.2 --no-progress
-        choco install 7zip -y --no-progress
+      - name: Install Tools
+        run: |
+          choco install lazarus -y --version=2.2.2 --no-progress
+          choco install 7zip -y --no-progress
 
-    - name: Build Cheat Engine (64-bit Release)
-      run: |
-        $project = Get-ChildItem -Recurse -Filter cheatengine.lpi | Select-Object -First 1
-        if ($project) {
+      - name: Build Project
+        shell: powershell
+        run: |
+          $env:Path = "C:\lazarus\fpc\3.2.2\bin\x86_64-win64;C:\lazarus;$env:Path"
+          $project = Get-ChildItem -Recurse -Filter cheatengine.lpi | Select-Object -First 1
+          if (!$project) { Write-Error 'No project file'; exit 1 }
           cd $project.DirectoryName
-          C:\lazarus\lazbuild.exe cheatengine.lpi --build-mode="Release 64"
-        }
+          $modes = @('Release', 'Release 64', 'Debug', 'Debug 64', 'Default')
+          foreach ($mode in $modes) {
+              & lazbuild.exe cheatengine.lpi --build-mode="$mode" 2>$null
+              if ($LASTEXITCODE -eq 0) { exit 0 }
+          }
+          & lazbuild.exe cheatengine.lpi
 
-    - name: Collect Build Artifacts
-      run: |
-        mkdir artifacts
-        Copy-Item -Recurse -Path *cheatengine*.exe -Destination artifacts\ -ErrorAction SilentlyContinue
-        if (!(Test-Path artifacts\*)) {
-          Copy-Item -Recurse -Path .\bin\*.exe -Destination artifacts\ -ErrorAction SilentlyContinue
-        }
+      - name: Collect Output
+        shell: powershell
+        run: |
+          New-Item -Name artifacts -ItemType Directory -Force | Out-Null
+          $paths = @('.\', '.\bin\', '.\lib\', '.\output\', '.\Cheat Engine\bin\')
+          foreach ($p in $paths) {
+              if (Test-Path $p) {
+                  Get-ChildItem -Path $p -Filter *.exe -Recurse -ErrorAction SilentlyContinue | Copy-Item -Destination artifacts -Force
+              }
+          }
 
-    - name: Create Archive
-      run: |
-        if (Test-Path artifacts\*.exe) {
-          7z a cheatengine-build-${{ github.sha }}.zip .\artifacts\*
-        }
+      - name: Create Archive
+        shell: powershell
+        run: |
+          if (Test-Path 'artifacts\*.exe') {
+              7z a build-${{ github.sha }}.zip .\artifacts\*
+          } else {
+              '' | Out-File -FilePath build-${{ github.sha }}.zip
+          }
 
-    - uses: actions/upload-artifact@v4
-      with:
-        name: CheatEngine-Build
-        path: cheatengine-build-${{ github.sha }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CheatEngine
+          path: build-${{ github.sha }}.zip
