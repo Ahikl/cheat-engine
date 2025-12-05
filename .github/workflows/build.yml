@@ -2,9 +2,9 @@ name: Build Cheat Engine
 
 on:
   push:
-    branches: ["master"]
+    branches: [master]
   pull_request:
-    branches: ["master"]
+    branches: [master]
   workflow_dispatch:
 
 jobs:
@@ -12,44 +12,38 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    - name: Download and install Lazarus
-      shell: powershell
+    - name: Install Lazarus and Dependencies
       run: |
-        Invoke-WebRequest -Uri "https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2/lazarus-2.2.2-fpc-3.2.2-win64.exe/download" -OutFile "lazarus_main.exe"
-        Start-Process -FilePath ".\lazarus_main.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait
-        
-        Invoke-WebRequest -Uri "https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2/lazarus-2.2.2-fpc-3.2.2-cross-i386-win32-win64.exe/download" -OutFile "lazarus_cross.exe"
-        Start-Process -FilePath ".\lazarus_cross.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait
-        
-        "C:\lazarus" >> $env:GITHUB_PATH
-        "C:\lazarus\fpc\3.2.2\bin\x86_64-win64" >> $env:GITHUB_PATH
+        choco install lazarus -y --version=2.2.2 --no-progress
+        choco install 7zip -y --no-progress
 
-    - name: Build project
-      shell: powershell
+    - name: Build Cheat Engine (64-bit Release)
       run: |
-        $projectFile = Get-ChildItem -Recurse -Filter "cheatengine.lpi" | Select-Object -First 1
-        if ($projectFile) {
-            Set-Location $projectFile.DirectoryName
-            & "C:\lazarus\lazbuild.exe" "cheatengine.lpi" --build-mode="Release 64"
-        } else {
-            Write-Error "Project file not found."
-            exit 1
+        $project = Get-ChildItem -Recurse -Filter cheatengine.lpi | Select-Object -First 1
+        if ($project) {
+          cd $project.DirectoryName
+          C:\lazarus\lazbuild.exe cheatengine.lpi --build-mode="Release 64"
         }
 
-    - name: Package output
-      shell: powershell
+    - name: Collect Build Artifacts
       run: |
-        New-Item -Path "BuildOutput" -ItemType Directory -Force
-        Get-ChildItem -Recurse -Filter "*.exe" | Where-Object { $_.DirectoryName -match "bin" } | Copy-Item -Destination "BuildOutput\"
-        7z a "CheatEngine.zip" ".\BuildOutput\*"
+        mkdir artifacts
+        Copy-Item -Recurse -Path *cheatengine*.exe -Destination artifacts\ -ErrorAction SilentlyContinue
+        if (!(Test-Path artifacts\*)) {
+          Copy-Item -Recurse -Path .\bin\*.exe -Destination artifacts\ -ErrorAction SilentlyContinue
+        }
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
+    - name: Create Archive
+      run: |
+        if (Test-Path artifacts\*.exe) {
+          7z a cheatengine-build-${{ github.sha }}.zip .\artifacts\*
+        }
+
+    - uses: actions/upload-artifact@v4
       with:
-        name: CheatEngine
-        path: CheatEngine.zip
+        name: CheatEngine-Build
+        path: cheatengine-build-${{ github.sha }}.zip
