@@ -49,9 +49,18 @@ jobs:
           $chosenUrl = $candidates | Sort-Object {
               if ($_ -match 'zh_CN(\d+)') { [int]$Matches[1] } else { 0 }
           } -Descending | Select-Object -First 1
-          Write-Host "Selected language pack URL: $chosenUrl"
+          Write-Host "Selected language pack URL (raw): $chosenUrl"
+
+          $baseUri = [System.Uri]$downloadsPage
+          $absoluteUrl = if ($chosenUrl -match '^https?://') {
+              $chosenUrl
+          } else {
+              [System.Uri]::new($baseUri, $chosenUrl).AbsoluteUri
+          }
+          Write-Host "Absolute URL: $absoluteUrl"
+
           $langArchive = "lang_pack.$([System.IO.Path]::GetExtension($chosenUrl))"
-          Invoke-WebRequest -Uri $chosenUrl -OutFile $langArchive
+          Invoke-WebRequest -Uri $absoluteUrl -OutFile $langArchive
           $tempDir = "temp_lang"
           New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
           & 7z x $langArchive -o"$tempDir" -y | Out-Null
