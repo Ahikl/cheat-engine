@@ -10,6 +10,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
       contents: write
     steps:
@@ -64,17 +66,37 @@ jobs:
           $tempDir = "temp_lang"
           New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
           & 7z x $langArchive -o"$tempDir" -y | Out-Null
-          $langFolder = Get-ChildItem -Path $tempDir -Directory | Where-Object { $_.Name -match '^(zh_CN|ch_cn|ch_CN)' } | Select-Object -First 1
-          if (-not $langFolder) {
-              $langFolder = Get-ChildItem -Path $tempDir -Directory | Select-Object -First 1
+
+          $langFolder = $null
+          $allDirs = Get-ChildItem -Path $tempDir -Directory
+          foreach ($dir in $allDirs) {
+              $lngFiles = Get-ChildItem -Path $dir.FullName -Filter "*.lng" -File
+              if ($lngFiles.Count -gt 0) {
+                  $langFolder = $dir
+                  Write-Host "Found language folder with .lng files: $($dir.Name)"
+                  break
+              }
           }
+          if (-not $langFolder) {
+              $langFolder = $allDirs | Where-Object { $_.Name -match '^(zh_CN|ch_cn|ch_CN)' } | Select-Object -First 1
+          }
+          if (-not $langFolder -and $allDirs.Count -eq 1) {
+              $langFolder = $allDirs[0]
+              Write-Host "Using the only subdirectory as language folder: $($langFolder.Name)"
+          }
+
           if ($langFolder) {
               $destLangDir = "dist\languages\$($langFolder.Name)"
               New-Item -Path $destLangDir -ItemType Directory -Force | Out-Null
               Copy-Item -Path "$($langFolder.FullName)\*" -Destination $destLangDir -Recurse -Force
               Write-Host "Language pack copied to: $destLangDir"
+              Get-ChildItem -Path $destLangDir -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
           } else {
-              Write-Warning "Language folder not found in archive, skipping language pack inclusion."
+              Write-Warning "No language folder found in archive, skipping language pack inclusion."
+              $destLangDir = "dist\languages"
+              New-Item -Path $destLangDir -ItemType Directory -Force | Out-Null
+              Copy-Item -Path "$tempDir\*" -Destination $destLangDir -Recurse -Force
+              Write-Host "Copied all extracted files directly to $destLangDir"
           }
 
       - name: Collect Output
@@ -85,19 +107,26 @@ jobs:
           if ($exeFile) {
               $outputDir = $exeFile.DirectoryName
               Copy-Item -Path "$outputDir\*" -Destination "dist\" -Recurse -Force
+              Write-Host "Copied build output from $outputDir to dist\"
           } else {
               Write-Error 'No build output found'
               exit 1
+          }
+          if (Test-Path "dist\languages") {
+              Write-Host "Languages directory exists in final dist."
+          } else {
+              Write-Warning "Languages directory not found after Collect Output!"
           }
 
       - name: Create Archive
         shell: powershell
         run: |
-          $archiveName = "CheatEngine-${{ github.sha }}.zip"
+          $archiveName = "CheatEngine.zip"
           if (Test-Path 'dist\*.exe') {
               7z a $archiveName .\dist\*
           } else {
-              '' | Out-File -FilePath $archiveName
+              Write-Error "No exe found in dist, cannot create archive"
+              exit 1
           }
           echo "ARCHIVE_NAME=$archiveName" | Out-File -FilePath $env:GITHUB_ENV -Append
 
