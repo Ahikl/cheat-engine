@@ -1,21 +1,27 @@
 name: Build Cheat Engine
+
 on:
   push:
     branches: [master]
   pull_request:
     branches: [master]
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
       - name: Install Tools
         run: |
           choco install lazarus -y --version=2.2.2 --no-progress
           choco install 7zip -y --no-progress
+
       - name: Build Project
         shell: powershell
         run: |
@@ -29,6 +35,39 @@ jobs:
               if ($LASTEXITCODE -eq 0) { exit 0 }
           }
           & lazbuild.exe cheatengine.lpi
+
+      - name: Fetch Latest Chinese Language Pack
+        shell: powershell
+        run: |
+          $downloadsPage = "https://www.cheatengine.org/downloads.php"
+          $web = Invoke-WebRequest -Uri $downloadsPage -UseBasicParsing
+          $candidates = $web.Links | Where-Object { $_.href -match 'zh_CN' } | ForEach-Object { $_.href }
+          if (-not $candidates) {
+              Write-Warning "No zh_CN language pack link found, using fallback static URL."
+              $candidates = @("https://www.cheatengine.org/download/zh_CN.rar")
+          }
+          $chosenUrl = $candidates | Sort-Object {
+              if ($_ -match 'zh_CN(\d+)') { [int]$Matches[1] } else { 0 }
+          } -Descending | Select-Object -First 1
+          Write-Host "Selected language pack URL: $chosenUrl"
+          $langArchive = "lang_pack.$([System.IO.Path]::GetExtension($chosenUrl))"
+          Invoke-WebRequest -Uri $chosenUrl -OutFile $langArchive
+          $tempDir = "temp_lang"
+          New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
+          & 7z x $langArchive -o"$tempDir" -y | Out-Null
+          $langFolder = Get-ChildItem -Path $tempDir -Directory | Where-Object { $_.Name -match '^(zh_CN|ch_cn|ch_CN)' } | Select-Object -First 1
+          if (-not $langFolder) {
+              $langFolder = Get-ChildItem -Path $tempDir -Directory | Select-Object -First 1
+          }
+          if ($langFolder) {
+              $destLangDir = "dist\languages\$($langFolder.Name)"
+              New-Item -Path $destLangDir -ItemType Directory -Force | Out-Null
+              Copy-Item -Path "$($langFolder.FullName)\*" -Destination $destLangDir -Recurse -Force
+              Write-Host "Language pack copied to: $destLangDir"
+          } else {
+              Write-Warning "Language folder not found in archive, skipping language pack inclusion."
+          }
+
       - name: Collect Output
         shell: powershell
         run: |
@@ -41,15 +80,48 @@ jobs:
               Write-Error 'No build output found'
               exit 1
           }
+
       - name: Create Archive
         shell: powershell
         run: |
+          $archiveName = "CheatEngine-${{ github.sha }}.zip"
           if (Test-Path 'dist\*.exe') {
-              7z a build-${{ github.sha }}.zip .\dist\*
+              7z a $archiveName .\dist\*
           } else {
-              '' | Out-File -FilePath build-${{ github.sha }}.zip
+              '' | Out-File -FilePath $archiveName
           }
-      - uses: actions/upload-artifact@v4
+          echo "ARCHIVE_NAME=$archiveName" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Generate SHA-256 checksum
+        shell: powershell
+        run: |
+          $archiveName = $env:ARCHIVE_NAME
+          $hash = (Get-FileHash -Path $archiveName -Algorithm SHA256).Hash
+          "$hash  $archiveName" | Out-File -FilePath "$archiveName.sha256" -Encoding ascii
+          echo "SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload Artifact (all triggers)
+        uses: actions/upload-artifact@v4
         with:
           name: CheatEngine
-          path: build-${{ github.sha }}.zip
+          path: |
+            ${{ env.ARCHIVE_NAME }}
+            ${{ env.ARCHIVE_NAME }}.sha256
+
+      - name: Create Release and Upload Assets
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.sha }}
+          name: "Build ${{ github.sha }} (Automated)"
+          body: |
+            ### Automated Build Artifact
+            - Commit: ${{ github.sha }}
+            - Run number: ${{ github.run_number }}
+            - Latest Simplified Chinese language pack integrated
+            - SHA-256: `${{ env.SHA256 }}`
+          files: |
+            ${{ env.ARCHIVE_NAME }}
+            ${{ env.ARCHIVE_NAME }}.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
